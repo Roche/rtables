@@ -72,36 +72,133 @@ path_enriched_df <- function(tt, pathproc = collapse_path) {
 
 }
 
-#' export as plain text with page break symbol
+#' Export as plain text with page break symbol
+#' 
 #' @inheritParams gen_args
 #' @param file character(1). File to write.
 #' @param paginate logical(1). Should \code{tt} be paginated before writing the file.
 #' @param \dots Passed directly to \code{\link{paginate_table}}
-#' @param page_break character(1). Page break symbol (defualts to outputting \code{"\\s"}).
+#' @param page_break character(1). Page break symbol (defaults to outputting \code{"\\s"}).
 #' @return \code{file} (this function is called for the side effect of writing the file.
+#' 
+#' 
 #' @export
-#' @examples
+#' 
+#' @seealso `export_as_pdf`
+#' 
+#' @examples 
+#' 
 #' lyt <- basic_table() %>%
 #'   split_cols_by("ARM") %>%
-#'   analyze(c("AGE", "BMRKR2"))
+#'   analyze(c("AGE", "BMRKR2", "COUNTRY"))
 #'
 #' tbl <- build_table(lyt, ex_adsl)
-#' ## this just displays it
-#' export_as_txt(tbl, file = NULL)
+#' 
+#' cat(export_as_txt(tbl, file = NULL, paginate = TRUE, lpp = 8))
+#' 
 #' \dontrun{
-#' tf <- tempfile(file.ext = ".txt")
-#' export_as_txt(tt, file = tf)
+#' tf <- tempfile(fileext = ".txt")
+#' export_as_txt(tbl, file = tf)
+#' system2("cat", tf)
 #' }
-export_as_txt <- function(tt, file = NULL, paginate = FALSE, ..., page_break = "\\s") {
+export_as_txt <- function(tt, file = NULL, paginate = FALSE, ..., page_break = "\n\\s\n") {
     if(paginate)
         tbls <- paginate_table(tt, ...)
     else
         tbls <- list(tt)
 
-    res <- paste(sapply(tbls, toString),
-                 collapse = paste0("\n", page_break, "\n\n"))
+    res <- paste(sapply(tbls, toString), collapse = page_break)
+    
     if(!is.null(file))
         cat(res, file = file)
     else
         res
+}
+
+
+#' Export as PDF
+#' 
+#' The PDF output is based on the ASCII output created with `toString`
+#' 
+#' @inheritParams export_as_txt
+#' @inheritParams grid::plotViewport
+#' @param file file to write, must have `.pdf` extension
+#' @param width the width and height of the graphics region in inches
+#' @param height the width and height of the graphics region in inches
+#' @param fontsize the size of text (in points)
+#' @param ... arguments passed on to `paginate_table`
+#' 
+#' @importFrom grDevices pdf
+#' @importFrom grid textGrob grid.newpage gpar pushViewport plotViewport unit grid.draw
+#'   convertWidth convertHeight grobHeight grobWidth
+#' 
+#' @seealso `export_as_txt`
+#' 
+#' 
+#' @importFrom grid textGrob
+#' @export
+#' 
+#' @examples 
+#' lyt <- basic_table() %>%
+#'   split_cols_by("ARM") %>%
+#'   analyze(c("AGE", "BMRKR2", "COUNTRY"))
+#'
+#' tbl <- build_table(lyt, ex_adsl)
+#' 
+#' \dontrun{
+#' tf <- tempfile(fileext = ".pdf")
+#' export_as_pdf(tbl, file = tf,  lpp = 8)
+#' }
+#' 
+export_as_pdf <- function(tt, 
+                          file, width = 11.7, height = 8.3, # passed to pdf()
+                          margins = c(4, 4, 4, 4), fontsize = 8,  # grid parameters
+                          paginate = TRUE, ... # passed to paginate_table
+) {
+    stopifnot(tools::file_ext(file) != ".pdf")
+    
+    colwidths <- propose_column_widths(tt)
+    tbls <- if (paginate)
+        paginate_table(tt, ...)
+    else 
+        list(tt)
+    
+    stbls <- lapply(tbls, toString, widths = colwidths)
+    
+    gtbls <- lapply(stbls, function(txt) {
+        textGrob(
+            label = txt,
+            x = unit(0, "npc"), y = unit(1, "npc"), 
+            just = c("left", "top"),
+            gp = gpar(fontsize = fontsize, fontfamily = "mono")
+        )
+    })
+    
+    npages <- length(gtbls)
+    exceeds_width = rep(FALSE, npages)
+    exceeds_height = rep(FALSE, npages)
+    
+    pdf(file = file, width = width, height = height)
+    for (i in seq_along(gtbls)) {
+        g <- gtbls[[i]]
+    
+        grid.newpage()
+        pushViewport(plotViewport(margins = margins))
+        
+        if (convertHeight(grobHeight(g), "inches", valueOnly = TRUE) > 
+            convertHeight(unit(1, "npc"), "inches", valueOnly = TRUE)) {
+            exceeds_height[i] <- TRUE
+            message("height of page", i, "exceeds the available space")
+        }
+        if (convertWidth(grobWidth(g), "inches", valueOnly = TRUE) > 
+            convertWidth(unit(1, "npc"), "inches", valueOnly = TRUE)) {
+            exceeds_width[i] <- TRUE
+            message("width of page", i, "exceeds the available space")
+        }
+        
+        grid.draw(g)
+    }
+    dev.off()
+    
+    list(file = file, npages = npages, exceeds_width = exceeds_width, exceeds_height = exceeds_height)
 }
